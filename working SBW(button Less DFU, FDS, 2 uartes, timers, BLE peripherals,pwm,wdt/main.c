@@ -29,6 +29,8 @@
   -->(21-DEC-20) Resolved bug - ble disconnects after data recieve from ble, solution - we should not sped more time in interrupt handlers.
   -->(26-Dec-20) Resoloved Bug - In manual Mode BMD values not updates if baby not admitted.
   -->(26-Dec-20) Added the alerts(atl,ath, btl,bth) deciding dynamically through factory setting inputs(commands)
+  -->(30-DEC-20) Added recovery from highpriority alert for Manual mode with htr percentage
+
 */
 #include <stdint.h>
 #include <string.h>
@@ -98,27 +100,29 @@
 #define OP_QUEUES_SIZE 3
 #define APP_TIMER_PRESCALER NRF_SERIAL_APP_TIMER_PRESCALER
 //|*****************************************************************************************************************
-#define APP_BLE_CONN_CFG_TAG 1 /**< A tag identifying the SoftDevice BLE configuration. */
-#define DEVICE_NAME "SBW3.0" /**< Name of device. Will be included in the advertising data. */ 
-#define NUS_SERVICE_UUID_TYPE BLE_UUID_TYPE_VENDOR_BEGIN /**< UUID type for the Nordic UART Service (vendor specific). */
-#define APP_BLE_OBSERVER_PRIO 3 /**< Application's BLE observer priority. You shouldn't need to modify this value. */
-#define APP_ADV_INTERVAL 64 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
-#define APP_ADV_DURATION 18000 /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
-#define MIN_CONN_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS) /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */ 
-#define MAX_CONN_INTERVAL MSEC_TO_UNITS(75, UNIT_1_25_MS) /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */ 
-#define SLAVE_LATENCY 0 /**< Slave latency. */ 
-#define CONN_SUP_TIMEOUT MSEC_TO_UNITS(4000, UNIT_10_MS) /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */ 
-#define FIRST_CONN_PARAMS_UPDATE_DELAY APP_TIMER_TICKS(5000) /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */ 
-#define NEXT_CONN_PARAMS_UPDATE_DELAY APP_TIMER_TICKS(30000) /**< Time between each call to sd_ble_gap_conn_param_update after the first call (30 seconds). */ 
-#define MAX_CONN_PARAMS_UPDATE_COUNT 3 /**< Number of attempts before giving up the connection parameter negotiation. */
-#define DEAD_BEEF 0xDEADBEEF /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
-#define UART_TX_BUF_SIZE 256 /**< UART TX buffer size. */ 
-#define UART_RX_BUF_SIZE 256 /**< UART RX buffer size. */
-#define rs485_RE 15
-#define rs485_DE 16
-#define LED NRF_GPIO_PIN_MAP(1, 1)	//NRF_GPIO_PIN_MAP(0,13)// NRF_GPIO_PIN_MAP(1,1)
-#define FLED NRF_GPIO_PIN_MAP(0, 14)	//NRF_GPIO_PIN_MAP(0,13)// NRF_GPIO_PIN_MAP(1,1)
-#define IR_PIN NRF_GPIO_PIN_MAP(1, 2)
+#define APP_BLE_CONN_CFG_TAG                    1 /**< A tag identifying the SoftDevice BLE configuration. */
+#define DEVICE_NAME                             "SBW3.0" /**< Name of device. Will be included in the advertising data. */ 
+#define NUS_SERVICE_UUID_TYPE                   BLE_UUID_TYPE_VENDOR_BEGIN /**< UUID type for the Nordic UART Service (vendor specific). */
+#define APP_BLE_OBSERVER_PRIO                   3 /**< Application's BLE observer priority. You shouldn't need to modify this value. */
+#define APP_ADV_INTERVAL                        64 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
+#define APP_ADV_DURATION                        18000 /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define MIN_CONN_INTERVAL                       MSEC_TO_UNITS(20, UNIT_1_25_MS) /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */ 
+#define MAX_CONN_INTERVAL                       MSEC_TO_UNITS(75, UNIT_1_25_MS) /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */ 
+#define SLAVE_LATENCY                           0 /**< Slave latency. */ 
+#define CONN_SUP_TIMEOUT                        MSEC_TO_UNITS(4000, UNIT_10_MS) /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */ 
+#define FIRST_CONN_PARAMS_UPDATE_DELAY          APP_TIMER_TICKS(5000) /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */ 
+#define NEXT_CONN_PARAMS_UPDATE_DELAY           APP_TIMER_TICKS(30000) /**< Time between each call to sd_ble_gap_conn_param_update after the first call (30 seconds). */ 
+#define MAX_CONN_PARAMS_UPDATE_COUNT            3 /**< Number of attempts before giving up the connection parameter negotiation. */
+#define DEAD_BEEF                               0xDEADBEEF /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
+
+#define UART_TX_BUF_SIZE                        256 /**< UART TX buffer size. */ 
+#define UART_RX_BUF_SIZE                        256 /**< UART RX buffer size. */
+
+#define rs485_RE                                15
+#define rs485_DE                                16
+#define LED                                     NRF_GPIO_PIN_MAP(1, 1)	//NRF_GPIO_PIN_MAP(0,13)// NRF_GPIO_PIN_MAP(1,1)
+#define FLED                                    NRF_GPIO_PIN_MAP(0, 14)	//NRF_GPIO_PIN_MAP(0,13)// NRF_GPIO_PIN_MAP(1,1)
+#define IR_PIN                                  NRF_GPIO_PIN_MAP(1, 2)
 //////////////For Birdmeditech MODBUS communication//////////////////
 #define DEVICE_ADDR 0x01
 #define FC_READ 0x03
@@ -932,7 +936,7 @@ void t2f_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"T2F\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"T2F\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -957,7 +961,7 @@ void apf_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"APF\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"APF\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -982,7 +986,7 @@ void hf_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"HF\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"HF\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -1007,7 +1011,7 @@ void sd_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"SD\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"SD\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -1032,7 +1036,7 @@ void lp_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"LP\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"LP\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -1057,7 +1061,7 @@ void lm_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"LM\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"LM\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -1082,7 +1086,7 @@ void bsf_close(void)
 {
   uint8_t buff[128];
   memset(&buff, 0, 128);
-  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"BSF\",\"s\":\"1\"}", DID);
+  sprintf(buff, "{\"DID\":\"%s\",\"MID\":\"205\",\"AL\":\"BSF\",\"s\":\"0\"}", DID);
   uint16_t length = (uint16_t) strlen(buff);
   ret_code_t ret;
   do {
@@ -1712,7 +1716,7 @@ void check_bmd_data(void)
                 bmd.sens_fail = heater_fail;	//4;
                 if (alert.hf_alert == 0)
                 {
-                  real_mode = mode;
+                  //real_mode = mode;
                   mode = manual_mode;
                   set.htr = 0;
                   set_com.htr_setflag = 1;
@@ -1744,7 +1748,7 @@ void check_bmd_data(void)
                 bmd.sens_fail = peri_probe_open;	//2;
                 if (alert.t2f_alert == 0)
                 {
-                  real_mode = mode;
+                  //real_mode = mode;
                   mode = manual_mode;
                   set.htr = 0;
                   set_com.htr_setflag = 1;
@@ -1776,7 +1780,7 @@ void check_bmd_data(void)
                 bmd.sens_fail = skin_probe_open;	//1;
                 if (alert.spf_alert == 0)
                 {
-                  real_mode = mode;
+                  //real_mode = mode;
                   mode = manual_mode;
                   set.htr = 0;
                   set_com.htr_setflag = 1;
@@ -1808,7 +1812,7 @@ void check_bmd_data(void)
                 bmd.sens_fail = air_probe_open;	//3;
                 if (alert.apf_alert == 0)
                 {
-                  real_mode = mode;
+                  //real_mode = mode;
                   mode = manual_mode;
                   set.htr = 0;
                   set_com.htr_setflag = 1;
@@ -2603,7 +2607,7 @@ int8_t ble_data_process(const char *ble_buff, uint8_t length)
             nrf_gpio_pin_write(LED, 0);
             led_offtime = app_timer_cnt_get();
           }
-          real_mode = manual_mode;
+          real_mode = 9;
           mode = manual_mode;
         //////////////////////////
           set.htr = Lhtr;
@@ -4466,7 +4470,7 @@ int main(void)
   nrf_gpio_cfg_output(rs485_RE);
   nrf_gpio_cfg_output(LED);
   nrf_gpio_cfg_output(FLED);
- 	//nrf_gpio_cfg_input(IR_PIN,NRF_GPIO_PIN_PULLDOWN);
+      //nrf_gpio_cfg_input(IR_PIN,NRF_GPIO_PIN_PULLDOWN);
 
   nrf_gpio_pin_write(rs485_RE, 0);
  	//nrf_gpio_pin_write(FLED,1);
@@ -4525,7 +4529,7 @@ int main(void)
         buz_beep();
         if ((buz_cnt > 15) && (ble_fail_process))
         {
-          real_mode = mode;
+          //real_mode = mode;
           mode = manual_mode;
           set.htr = 0;
           set_com.htr_setflag = 1;
@@ -4543,20 +4547,22 @@ int main(void)
       }
       if ((!isHighPriorityAlert()) && (mode != real_mode))
       {
-        mode = real_mode;
-        if (mode == skin_mode)
+        
+        if (real_mode == skin_mode)
         {
           set_com.T1skin_setflag = 1;
         }
-        else if (mode == air_mode)
+        else if (real_mode == air_mode)
         {
           set_com.T3air_setflag = 1;
         }
-        else if(mode == manual_mode)
+        else if((real_mode == 9)&&(real_htr != set.htr))
         {
+          real_mode = manual_mode;
           set.htr = real_htr;
           set_com.htr_setflag = 1;
         }
+        mode = real_mode;
       }
 ////////////////////////////////////////////////////////////////////////////////////////
 if ((F_sta.sMODE_flag == 1) || (F_sta.sBaby_status_flag == 1))
