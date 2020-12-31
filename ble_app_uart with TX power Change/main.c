@@ -629,7 +629,7 @@ static void advertising_init(void)
 
     ble_advertising_conn_cfg_tag_set(&m_advertising, APP_BLE_CONN_CFG_TAG);
 }
-#define TX_POWER_LEVEL                  (8)
+#define TX_POWER_LEVEL                  (4)
 static void tx_power_set(void)
 {
     ret_code_t err_code = sd_ble_gap_tx_power_set(BLE_GAP_TX_POWER_ROLE_ADV, m_advertising.adv_handle, TX_POWER_LEVEL);
